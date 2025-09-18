@@ -1,352 +1,402 @@
 #!/bin/bash
-
-# Telegram Auto Check-in Bot 一键安装脚本
-# 支持 Ubuntu/Debian/CentOS/RHEL/Fedora
-# 支持 root 和普通用户
+# install.sh - Telegram Auto Sender 安装启动脚本
 
 set -e
 
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
+YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# 打印带颜色的信息
-print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+# 打印横幅
+print_banner() {
+    echo -e "${BLUE}"
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                           Telegram Auto Sender                              ║"
+    echo "║                              自动发送机器人                                    ║"
+    echo "║                                安装脚本                                       ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
 }
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+# 日志函数
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
 }
 
-print_error() {
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+log_step() {
+    echo -e "${BLUE}[STEP]${NC} $1"
 }
 
-# 检测系统类型
-detect_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$ID
-        VER=$VERSION_ID
-    elif type lsb_release >/dev/null 2>&1; then
-        OS=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
-        VER=$(lsb_release -sr)
+# 检查系统要求
+check_system() {
+    log_step "检查系统环境..."
+    
+    # 检查操作系统
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        log_info "检测到 Linux 系统"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        log_info "检测到 macOS 系统"
     else
-        print_error "无法检测系统类型"
+        log_warn "未知操作系统: $OSTYPE"
+    fi
+    
+    # 检查Python
+    if ! command -v python3 &> /dev/null; then
+        log_error "Python3 未安装，请先安装 Python 3.8+"
         exit 1
     fi
-}
-
-# 检查 Python 版本
-check_python() {
-    print_info "检查 Python 版本..."
     
-    # 检查 python3
-    if command -v python3 &> /dev/null; then
-        PYTHON_VERSION=$(python3 --version | awk '{print $2}')
-        PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
-        PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
-        
-        if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 8 ]; then
-            print_success "Python 版本符合要求: $PYTHON_VERSION"
-            PYTHON_CMD="python3"
-            return 0
-        else
-            print_warning "Python 版本过低: $PYTHON_VERSION，需要安装 Python 3.8+"
-        fi
+    python_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    log_info "Python 版本: $python_version"
+    
+    # 检查Python版本
+    if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'; then
+        log_error "需要 Python 3.8 或更高版本"
+        exit 1
     fi
     
-    # 需要安装 Python
-    return 1
-}
-
-# 运行命令（自动处理 root/sudo）
-run_cmd() {
-    if [ "$EUID" -eq 0 ]; then
-        # 是 root 用户，直接运行
-        "$@"
-    else
-        # 非 root 用户，使用 sudo
-        sudo "$@"
+    # 检查pip
+    if ! command -v pip3 &> /dev/null; then
+        log_error "pip3 未安装"
+        exit 1
     fi
-}
-
-# 安装 Python 3.8+
-install_python() {
-    print_info "安装 Python 3.8+..."
     
-    case $OS in
-        ubuntu|debian)
-            run_cmd apt-get update -qq
-            run_cmd apt-get install -y python3 python3-venv python3-pip
-            ;;
-        centos|rhel|fedora)
-            if [ "$VER" -ge 8 ]; then
-                run_cmd dnf install -y python38 python38-devel
-            else
-                run_cmd yum install -y centos-release-scl
-                run_cmd yum install -y rh-python38 rh-python38-python-devel
-                source /opt/rh/rh-python38/enable
-            fi
-            ;;
-        *)
-            print_error "不支持的系统: $OS"
-            exit 1
-            ;;
-    esac
+    log_info "✅ 系统环境检查通过"
 }
 
-# 安装系统依赖
+# 安装依赖
 install_dependencies() {
-    print_info "安装系统依赖..."
+    log_step "安装 Python 依赖..."
     
-    case $OS in
-        ubuntu|debian)
-            run_cmd apt-get update -qq
-            run_cmd apt-get install -y git curl wget gcc python3-dev screen
-            ;;
-        centos|rhel|fedora)
-            run_cmd yum install -y git curl wget gcc python3-devel screen
-            ;;
-        *)
-            print_error "不支持的系统: $OS"
-            exit 1
-            ;;
-    esac
-    
-    print_success "系统依赖安装完成"
-}
-
-# 克隆项目
-clone_project() {
-    print_info "下载项目代码..."
-    
-    # 如果已经在项目目录中，跳过克隆
-    if [ -f "main.py" ] && [ -f "requirements.txt" ]; then
-        print_info "已在项目目录中，跳过下载"
-        PROJECT_DIR=$(pwd)
-    else
-        # 克隆项目
-        if [ -d "telegram-checkin-bot" ]; then
-            print_warning "项目目录已存在，更新代码..."
-            cd telegram-checkin-bot
-            git pull
-            cd ..
-        else
-            git clone https://github.com/kelenetwork/telegram-checkin-bot.git
-        fi
-        PROJECT_DIR=$(pwd)/telegram-checkin-bot
-        cd $PROJECT_DIR
+    if [ ! -f "requirements.txt" ]; then
+        log_error "requirements.txt 文件不存在"
+        exit 1
     fi
     
-    print_success "项目代码准备完成"
-}
-
-# 设置虚拟环境
-setup_venv() {
-    print_info "设置 Python 虚拟环境..."
-    
-    # 删除旧的虚拟环境（如果存在）
-    if [ -d "venv" ]; then
-        print_warning "删除旧的虚拟环境..."
-        rm -rf venv
-    fi
-    
-    # 创建虚拟环境
-    $PYTHON_CMD -m venv venv
-    
-    # 激活虚拟环境
-    source venv/bin/activate
-    
-    # 升级 pip
-    pip install --upgrade pip wheel setuptools
-    
-    print_success "虚拟环境设置完成"
-}
-
-# 安装 Python 包
-install_packages() {
-    print_info "安装 Python 依赖包..."
-    
-    # 使用国内镜像加速（如果在中国）
-    if curl -s --connect-timeout 3 https://pypi.doubanio.com &> /dev/null; then
-        print_info "使用豆瓣镜像加速下载..."
-        pip config set global.index-url https://pypi.doubanio.com/simple
-    fi
+    # 升级pip
+    log_info "升级 pip..."
+    python3 -m pip install --upgrade pip
     
     # 安装依赖
-    pip install -r requirements.txt
+    log_info "安装项目依赖..."
+    pip3 install -r requirements.txt
     
-    print_success "Python 依赖安装完成"
+    log_info "✅ 依赖安装完成"
 }
 
-# 创建启动脚本
-create_start_script() {
-    print_info "创建启动脚本..."
+# 创建目录结构
+create_directories() {
+    log_step "创建目录结构..."
     
-    cat > start.sh << 'EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-source venv/bin/activate
-python main.py
-EOF
+    directories=("data" "logs" "sessions" "temp" "backups")
     
-    chmod +x start.sh
+    for dir in "${directories[@]}"; do
+        if [ ! -d "$dir" ]; then
+            mkdir -p "$dir"
+            log_info "创建目录: $dir"
+        fi
+    done
     
-    print_success "启动脚本创建完成"
+    log_info "✅ 目录结构创建完成"
 }
 
-# 创建 systemd 服务
+# 配置文件设置
+setup_config() {
+    log_step "配置文件设置..."
+    
+    if [ ! -f "config.json" ]; then
+        if [ -f "config.json.example" ]; then
+            cp config.json.example config.json
+            log_info "已复制配置模板到 config.json"
+            log_warn "请编辑 config.json 文件，填入您的配置信息："
+            log_warn "  - BOT_TOKEN: Telegram Bot Token"
+            log_warn "  - API_ID: Telegram API ID"
+            log_warn "  - API_HASH: Telegram API Hash"
+            log_warn "  - admin_users: 管理员用户ID列表"
+        else
+            log_error "配置模板文件 config.json.example 不存在"
+            exit 1
+        fi
+    else
+        log_info "配置文件 config.json 已存在"
+    fi
+}
+
+# 检查配置文件
+check_config() {
+    log_step "检查配置文件..."
+    
+    if [ ! -f "config.json" ]; then
+        log_error "配置文件 config.json 不存在"
+        return 1
+    fi
+    
+    # 使用Python检查配置
+    python3 -c "
+import json
+import sys
+
+try:
+    with open('config.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    
+    # 检查必要字段
+    required_fields = ['bot_token', 'api_id', 'api_hash']
+    missing_fields = []
+    
+    for field in required_fields:
+        if not config.get(field) or config.get(field) == 'YOUR_${field.upper()}_HERE':
+            missing_fields.append(field)
+    
+    if missing_fields:
+        print(f'❌ 缺少必要配置: {', '.join(missing_fields)}')
+        sys.exit(1)
+    
+    print('✅ 配置文件检查通过')
+    
+except json.JSONDecodeError as e:
+    print(f'❌ 配置文件JSON格式错误: {e}')
+    sys.exit(1)
+except Exception as e:
+    print(f'❌ 配置文件检查失败: {e}')
+    sys.exit(1)
+"
+    
+    if [ $? -ne 0 ]; then
+        log_error "配置文件检查失败，请检查并修正配置"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 创建服务文件 (systemd)
 create_systemd_service() {
-    print_info "创建 systemd 服务..."
+    log_step "创建系统服务..."
     
-    # 获取当前用户和路径
-    CURRENT_USER=$(whoami)
-    WORK_DIR=$(pwd)
+    if ! command -v systemctl &> /dev/null; then
+        log_warn "systemd 不可用，跳过服务创建"
+        return
+    fi
     
-    # 创建服务文件
-    run_cmd tee /etc/systemd/system/telegram-checkin-bot.service > /dev/null << EOF
+    read -p "是否创建系统服务 (systemd)? [y/N]: " create_service
+    
+    if [[ $create_service =~ ^[Yy]$ ]]; then
+        current_dir=$(pwd)
+        current_user=$(whoami)
+        
+        service_file="/etc/systemd/system/telegram-auto-sender.service"
+        
+        sudo tee "$service_file" > /dev/null <<EOF
 [Unit]
-Description=Telegram Auto Check-in Bot
+Description=Telegram Auto Sender Bot
 After=network.target
 
 [Service]
 Type=simple
-User=$CURRENT_USER
-WorkingDirectory=$WORK_DIR
-Environment="PATH=$WORK_DIR/venv/bin"
-ExecStart=$WORK_DIR/venv/bin/python $WORK_DIR/main.py
+User=$current_user
+WorkingDirectory=$current_dir
+ExecStart=$(which python3) $current_dir/main.py
 Restart=always
-RestartSec=10
-StandardOutput=append:$WORK_DIR/bot.log
-StandardError=append:$WORK_DIR/bot.log
+RestartSec=5
+Environment=PYTHONPATH=$current_dir
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    
-    # 重载 systemd
-    run_cmd systemctl daemon-reload
-    
-    print_success "Systemd 服务创建完成"
+        
+        sudo systemctl daemon-reload
+        sudo systemctl enable telegram-auto-sender
+        
+        log_info "系统服务已创建: telegram-auto-sender"
+        log_info "使用以下命令管理服务:"
+        log_info "  启动: sudo systemctl start telegram-auto-sender"
+        log_info "  停止: sudo systemctl stop telegram-auto-sender"
+        log_info "  查看状态: sudo systemctl status telegram-auto-sender"
+        log_info "  查看日志: sudo journalctl -u telegram-auto-sender -f"
+    fi
 }
 
-# 显示完成信息
-show_completion_info() {
-    echo
-    print_success "🎉 安装完成！"
-    echo
-    echo -e "${GREEN}接下来的步骤：${NC}"
-    echo
-    echo "1. 直接运行（前台模式）："
-    echo "   cd $PROJECT_DIR"
-    echo "   ./start.sh"
-    echo
-    echo "2. 使用 screen 后台运行："
-    echo "   cd $PROJECT_DIR"
-    echo "   screen -S telegram-bot"
-    echo "   ./start.sh"
-    echo "   # 按 Ctrl+A 然后按 D 分离会话"
-    echo
-    if [ "$EUID" -eq 0 ]; then
-        echo "3. 使用 systemd 服务（推荐）："
-        echo "   systemctl start telegram-checkin-bot"
-        echo "   systemctl enable telegram-checkin-bot  # 开机自启"
-        echo "   systemctl status telegram-checkin-bot   # 查看状态"
-    else
-        echo "3. 使用 systemd 服务（推荐）："
-        echo "   sudo systemctl start telegram-checkin-bot"
-        echo "   sudo systemctl enable telegram-checkin-bot  # 开机自启"
-        echo "   sudo systemctl status telegram-checkin-bot   # 查看状态"
-    fi
-    echo
-    echo -e "${YELLOW}首次运行需要配置以下信息：${NC}"
-    echo "   - Bot Token (从 @BotFather 获取)"
-    echo "   - Telegram ID (从 @userinfobot 获取)"
-    echo "   - API ID 和 Hash (从 https://my.telegram.org 获取)"
-    echo "   - 手机号码"
-    echo
+# 运行测试
+run_test() {
+    log_step "运行配置测试..."
     
-    if [ "$EUID" -eq 0 ]; then 
-        echo
-        print_warning "⚠️  注意：您使用 root 用户安装"
-        print_warning "建议创建普通用户运行服务以提高安全性"
-        echo
-        echo "创建运行用户的命令："
-        echo "   useradd -m -s /bin/bash telegram"
-        echo "   chown -R telegram:telegram $PROJECT_DIR"
-        echo "   # 然后修改 systemd 服务文件中的 User=telegram"
+    python3 -c "
+import sys
+sys.path.insert(0, '.')
+from config_manager import ConfigManager
+
+try:
+    config = ConfigManager()
+    print('✅ 配置管理器初始化成功')
+    
+    # 测试基本功能
+    bot_token = config.get_bot_token()
+    if bot_token and bot_token != 'YOUR_BOT_TOKEN_HERE':
+        print('✅ Bot Token 配置正确')
+    else:
+        print('❌ Bot Token 未配置或配置错误')
+        sys.exit(1)
+    
+    api_id = config.get_api_id()
+    api_hash = config.get_api_hash()
+    if api_id and api_hash and api_hash != 'YOUR_API_HASH_HERE':
+        print('✅ API 配置正确')
+    else:
+        print('❌ API 配置未配置或配置错误')
+        sys.exit(1)
+    
+    print('✅ 所有基础配置检查通过')
+    
+except Exception as e:
+    print(f'❌ 配置测试失败: {e}')
+    sys.exit(1)
+"
+    
+    if [ $? -eq 0 ]; then
+        log_info "✅ 配置测试通过"
+    else
+        log_error "配置测试失败"
+        return 1
     fi
+}
+
+# 启动程序
+start_program() {
+    log_step "启动程序..."
+    
+    read -p "是否立即启动程序? [y/N]: " start_now
+    
+    if [[ $start_now =~ ^[Yy]$ ]]; then
+        log_info "启动 Telegram Auto Sender..."
+        python3 main.py
+    else
+        log_info "程序未启动，您可以稍后使用以下命令启动:"
+        log_info "  python3 main.py"
+        log_info "或者使用后台运行:"
+        log_info "  nohup python3 main.py > logs/app.log 2>&1 &"
+    fi
+}
+
+# 显示使用说明
+show_usage() {
+    echo
+    log_info "🎉 安装完成！"
+    echo
+    echo -e "${BLUE}使用说明:${NC}"
+    echo "1. 编辑 config.json 文件，填入正确的配置信息"
+    echo "2. 运行程序: python3 main.py"
+    echo "3. 在Telegram中找到您的Bot，发送 /start 开始使用"
+    echo
+    echo -e "${BLUE}目录说明:${NC}"
+    echo "  config.json     - 主配置文件"
+    echo "  data/          - 数据存储目录"
+    echo "  logs/          - 日志文件目录"
+    echo "  sessions/      - Telegram会话文件"
+    echo "  temp/          - 临时文件目录"
+    echo "  backups/       - 备份文件目录"
+    echo
+    echo -e "${BLUE}常用命令:${NC}"
+    echo "  启动程序: python3 main.py"
+    echo "  后台运行: nohup python3 main.py > logs/app.log 2>&1 &"
+    echo "  查看日志: tail -f logs/app.log"
+    echo
+    echo -e "${BLUE}获取帮助:${NC}"
+    echo "  项目地址: https://github.com/your-repo"
+    echo "  问题反馈: https://github.com/your-repo/issues"
+    echo
 }
 
 # 主函数
 main() {
-    clear
-    echo -e "${BLUE}======================================${NC}"
-    echo -e "${BLUE}  Telegram Auto Check-in Bot 安装器  ${NC}"
-    echo -e "${BLUE}======================================${NC}"
-    echo
+    print_banner
     
-    # 检测系统
-    detect_os
-    print_info "检测到系统: $OS $VER"
+    log_info "开始安装 Telegram Auto Sender..."
     
-    # 提示用户权限信息
-    if [ "$EUID" -eq 0 ]; then 
-        print_info "以 root 用户身份运行"
-    else
-        print_info "以普通用户身份运行"
-        # 检查 sudo 权限
-        if ! sudo -n true 2>/dev/null; then
-            print_warning "需要 sudo 权限来安装系统依赖"
-            sudo -v
-        fi
-    fi
+    # 检查系统环境
+    check_system
     
-    # 安装系统依赖
+    # 安装依赖
     install_dependencies
     
-    # 检查并安装 Python
-    if ! check_python; then
-        install_python
-        # 重新检查
-        if ! check_python; then
-            print_error "Python 安装失败"
-            exit 1
-        fi
+    # 创建目录结构
+    create_directories
+    
+    # 配置文件设置
+    setup_config
+    
+    # 等待用户配置
+    if [ ! -f "config.json" ] || ! check_config; then
+        echo
+        log_warn "请编辑 config.json 文件，填入正确的配置信息后重新运行此脚本"
+        echo
+        echo -e "${YELLOW}配置步骤:${NC}"
+        echo "1. 获取 Bot Token: 向 @BotFather 创建机器人"
+        echo "2. 获取 API ID 和 API Hash: 访问 https://my.telegram.org/apps"
+        echo "3. 获取用户ID: 向 @userinfobot 发送消息"
+        echo "4. 编辑 config.json 文件，替换相应的配置项"
+        echo
+        echo "配置完成后运行: ./install.sh --check"
+        exit 0
     fi
     
-    # 克隆项目
-    clone_project
+    # 运行测试
+    run_test
     
-    # 设置虚拟环境
-    setup_venv
+    # 创建系统服务
+    create_systemd_service
     
-    # 安装 Python 包
-    install_packages
+    # 显示使用说明
+    show_usage
     
-    # 创建启动脚本
-    create_start_script
-    
-    # 询问是否创建 systemd 服务
-    echo
-    read -p "是否创建 systemd 服务？[y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        create_systemd_service
-    fi
-    
-    # 显示完成信息
-    show_completion_info
+    # 询问是否启动
+    start_program
 }
 
-# 运行主函数
-main
+# 处理命令行参数
+case "${1:-}" in
+    "--check")
+        log_info "检查配置..."
+        if check_config && run_test; then
+            log_info "✅ 配置检查通过，可以启动程序"
+        else
+            log_error "❌ 配置检查失败"
+            exit 1
+        fi
+        ;;
+    "--start")
+        log_info "启动程序..."
+        if check_config && run_test; then
+            python3 main.py
+        else
+            log_error "❌ 配置检查失败，无法启动"
+            exit 1
+        fi
+        ;;
+    "--help")
+        echo "Telegram Auto Sender 安装脚本"
+        echo
+        echo "用法: ./install.sh [选项]"
+        echo
+        echo "选项:"
+        echo "  (无参数)   完整安装过程"
+        echo "  --check    仅检查配置"
+        echo "  --start    检查配置并启动程序" 
+        echo "  --help     显示此帮助信息"
+        ;;
+    *)
+        main
+        ;;
+esac
