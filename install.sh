@@ -73,15 +73,15 @@ install_python() {
     
     case $OS in
         ubuntu|debian)
-            sudo apt-get update -qq
-            sudo apt-get install -y python3.8 python3.8-venv python3-pip
+            apt-get update -qq
+            apt-get install -y python3 python3-venv python3-pip
             ;;
         centos|rhel|fedora)
             if [ "$VER" -ge 8 ]; then
-                sudo dnf install -y python38 python38-devel
+                dnf install -y python38 python38-devel
             else
-                sudo yum install -y centos-release-scl
-                sudo yum install -y rh-python38 rh-python38-python-devel
+                yum install -y centos-release-scl
+                yum install -y rh-python38 rh-python38-python-devel
                 source /opt/rh/rh-python38/enable
             fi
             ;;
@@ -98,11 +98,11 @@ install_dependencies() {
     
     case $OS in
         ubuntu|debian)
-            sudo apt-get update -qq
-            sudo apt-get install -y git curl wget gcc python3-dev screen
+            apt-get update -qq
+            apt-get install -y git curl wget gcc python3-dev screen
             ;;
         centos|rhel|fedora)
-            sudo yum install -y git curl wget gcc python3-devel screen
+            yum install -y git curl wget gcc python3-devel screen
             ;;
         *)
             print_error "不支持的系统: $OS"
@@ -201,7 +201,7 @@ create_systemd_service() {
     WORK_DIR=$(pwd)
     
     # 创建服务文件
-    sudo tee /etc/systemd/system/telegram-checkin-bot.service > /dev/null << EOF
+    tee /etc/systemd/system/telegram-checkin-bot.service > /dev/null << EOF
 [Unit]
 Description=Telegram Auto Check-in Bot
 After=network.target
@@ -222,7 +222,7 @@ WantedBy=multi-user.target
 EOF
     
     # 重载 systemd
-    sudo systemctl daemon-reload
+    systemctl daemon-reload
     
     print_success "Systemd 服务创建完成"
 }
@@ -245,9 +245,9 @@ show_completion_info() {
     echo "   # 按 Ctrl+A 然后按 D 分离会话"
     echo
     echo "3. 使用 systemd 服务（推荐）："
-    echo "   sudo systemctl start telegram-checkin-bot"
-    echo "   sudo systemctl enable telegram-checkin-bot  # 开机自启"
-    echo "   sudo systemctl status telegram-checkin-bot  # 查看状态"
+    echo "   systemctl start telegram-checkin-bot"
+    echo "   systemctl enable telegram-checkin-bot  # 开机自启"
+    echo "   systemctl status telegram-checkin-bot  # 查看状态"
     echo
     echo -e "${YELLOW}首次运行需要配置以下信息：${NC}"
     echo "   - Bot Token (从 @BotFather 获取)"
@@ -255,6 +255,12 @@ show_completion_info() {
     echo "   - API ID 和 Hash (从 https://my.telegram.org 获取)"
     echo "   - 手机号码"
     echo
+    
+    if [ "$EUID" -eq 0 ]; then 
+        echo
+        print_warning "⚠️  您正在使用 root 用户运行"
+        print_warning "出于安全考虑，建议创建普通用户运行此服务"
+    fi
 }
 
 # 主函数
@@ -269,16 +275,22 @@ main() {
     detect_os
     print_info "检测到系统: $OS $VER"
     
-    # 检查是否为 root
+    # 检查是否为 root 并发出警告
     if [ "$EUID" -eq 0 ]; then 
-        print_error "请不要使用 root 用户运行此脚本"
-        exit 1
-    fi
-    
-    # 检查 sudo 权限
-    if ! sudo -n true 2>/dev/null; then
-        print_warning "需要 sudo 权限来安装系统依赖"
-        sudo -v
+        print_warning "⚠️  检测到您正在使用 root 用户"
+        print_warning "建议创建普通用户运行此程序以提高安全性"
+        echo
+        read -p "是否继续使用 root 用户安装？[y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_info "安装已取消"
+            print_info "您可以创建新用户后重新运行安装："
+            echo "   useradd -m -s /bin/bash telegram"
+            echo "   passwd telegram"
+            echo "   usermod -aG sudo telegram"
+            echo "   su - telegram"
+            exit 0
+        fi
     fi
     
     # 安装系统依赖
