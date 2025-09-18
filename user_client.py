@@ -1,200 +1,296 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-用户客户端
-使用Telethon实现Telegram用户登录和签到功能
-"""
 
-import os
 import asyncio
-import random
+import logging
+from typing import Optional, Dict, Any, Union
+from telethon import TelegramClient, events, functions, types
+from telethon.errors import (
+    SessionPasswordNeededError, 
+    FloodWaitError, 
+    UserPrivacyRestrictedError,
+    ChatWriteForbiddenError,
+    PeerFloodError
+)
+from telethon.tl.types import User, Chat, Channel
 import pytz
-from datetime import datetime, time as dt_time
-from typing import Tuple, Optional
-from telethon import TelegramClient, events
-from telethon.tl.functions.messages import SendMessageRequest
-from telethon.errors import SessionPasswordNeededError
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from datetime import datetime
+import time
+import random
+
+logger = logging.getLogger(__name__)
 
 class UserClient:
-    def __init__(self, config_manager):
-        self.config_manager = config_manager
+    def __init__(self, api_id: str, api_hash: str, session_name: str = "user_session"):
+        self.api_id = api_id
+        self.api_hash = api_hash
+        self.session_name = session_name
         self.client = None
-        self.scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Shanghai'))
-        self.session_path = os.path.join(self.config_manager.config_dir, "user_session")
-        
-    def is_connected(self) -> bool:
-        """检查客户端是否已连接"""
-        return self.client and self.client.is_connected()
-    
-    async def start(self):
-        """启动客户端"""
-        api_id = int(self.config_manager.config.get('api_id', 0))
-        api_hash = self.config_manager.config.get('api_hash', '')
-        phone = self.config_manager.config.get('phone_number', '')
-        
-        if not all([api_id, api_hash, phone]):
-            print("❌ API配置不完整，无法启动用户客户端")
-            return
-        
-        # 创建客户端
-        self.client = TelegramClient(
-            self.session_path,
-            api_id,
-            api_hash
-        )
-        
-        # 启动客户端
-        await self.client.start(
-            phone=phone,
-            code_callback=self._code_callback,
-            password=self._password_callback
-        )
-        
-        # 获取登录信息
-        me = await self.client.get_me()
-        print(f"✅ 用户客户端已登录: {me.first_name} (@{me.username})")
-        
-        # 启动调度器
-        self.scheduler.start()
-        
-        # 加载所有任务
-        await self.load_all_tasks()
-    
+        self.is_connected = False
+        self.shanghai_tz = pytz.timezone('Asia/Shanghai')
+        self.last_message_time = {}  # 防止发送过于频繁
+
+    async def start(self) -> bool:
+        """启动用户客户端"""
+        try:
+            if not self.api_id or not self.api_hash:
+                logger.error("❌ API凭据未配置")
+                return False
+
+            self.client = TelegramClient(
+                self.session_name,
+                int(self.api_id),
+                self.api_hash,
+                device_model="Telegram Bot",
+                system_version="1.0",
+                app_version="1.0",
+                lang_code="zh",
+                system_lang_code="zh"
+            )
+
+            await self.client.start()
+            
+            if not await self.client.is_user_authorized():
+                logger.warning("⚠️ 用户未授权，需要登录")
+                return False
+
+            self.is_connected = True
+            me = await self.client.get_me()
+            logger.info(f"✅ 用户客户端已连接: @{me.username or me.first_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 用户客户端启动失败: {e}")
+            return False
+
     async def stop(self):
         """停止客户端"""
-        if self.scheduler.running:
-            self.scheduler.shutdown()
-        
-        if self.client:
-            await self.client.disconnect()
-    
-    async def _code_callback(self):
-        """验证码回调"""
-        code = input("请输入Telegram验证码: ")
-        return code
-    
-    async def _password_callback(self):
-        """两步验证密码回调"""
-        password = input("请输入两步验证密码: ")
-        return password
-    
-    async def load_all_tasks(self):
-        """加载所有任务到调度器"""
-        for user_id, tasks in self.config_manager.tasks.items():
-            for task in tasks:
-                if task['enabled']:
-                    await self.register_task(task)
-    
-    async def register_task(self, task: dict):
-        """注册定时任务"""
-        task_id = f"task_{task['id']}"
-        
-        # 移除已存在的任务
-        if self.scheduler.get_job(task_id):
-            self.scheduler.remove_job(task_id)
-        
-        # 为每个时间点创建定时任务
-        for schedule_time in task['schedule_times']:
-            hour, minute = map(int, schedule_time.split(':'))
-            
-            # 添加随机延迟（0-60秒）
-            second = random.randint(0, 59)
-            
-            # 创建触发器
-            trigger = CronTrigger(
-                hour=hour,
-                minute=minute,
-                second=second,
-                timezone=pytz.timezone('Asia/Shanghai')
-            )
-            
-            # 添加任务
-            self.scheduler.add_job(
-                self.execute_checkin,
-                trigger=trigger,
-                args=[task],
-                id=f"{task_id}_{schedule_time}",
-                replace_existing=True
-            )
-        
-        print(f"✅ 已注册任务: {task['id']} - {task['target']}")
-    
-    async def execute_checkin(self, task: dict):
-        """执行签到任务"""
         try:
-            # 根据任务类型执行签到
-            if task['type'] == 'group':
-                success, message = await self._checkin_group(task)
-            else:  # bot
-                success, message = await self._checkin_bot(task)
+            if self.client:
+                await self.client.disconnect()
+            self.is_connected = False
+            logger.info("✅ 用户客户端已断开")
+        except Exception as e:
+            logger.error(f"❌ 停止客户端失败: {e}")
+
+    async def login_with_phone(self, phone: str) -> Dict[str, Any]:
+        """使用手机号登录"""
+        try:
+            if not self.client:
+                self.client = TelegramClient(
+                    self.session_name,
+                    int(self.api_id),
+                    self.api_hash
+                )
+
+            await self.client.connect()
+            result = await self.client.send_code_request(phone)
+            return {
+                "success": True, 
+                "message": "验证码已发送",
+                "phone_code_hash": result.phone_code_hash
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 发送验证码失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def verify_code(self, phone: str, code: str, password: str = None) -> Dict[str, Any]:
+        """验证登录码"""
+        try:
+            if not self.client:
+                return {"success": False, "error": "客户端未初始化"}
+
+            try:
+                await self.client.sign_in(phone, code)
+            except SessionPasswordNeededError:
+                if not password:
+                    return {"success": False, "need_password": True, "error": "需要两步验证密码"}
+                await self.client.sign_in(password=password)
+
+            self.is_connected = True
+            me = await self.client.get_me()
+            return {
+                "success": True,
+                "user": {
+                    "id": me.id,
+                    "username": me.username,
+                    "first_name": me.first_name,
+                                        "last_name": me.last_name
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 验证码验证失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def send_message(self, target: str, message: str, delay: int = None) -> Dict[str, Any]:
+        """发送消息"""
+        try:
+            if not self.is_connected:
+                return {"success": False, "error": "客户端未连接"}
+
+            # 防止发送过于频繁
+            now = time.time()
+            last_time = self.last_message_time.get(target, 0)
+            if now - last_time < 3:  # 至少间隔3秒
+                await asyncio.sleep(3 - (now - last_time))
+
+            # 解析目标
+            entity = await self.resolve_entity(target)
+            if not entity:
+                return {"success": False, "error": f"无法找到目标: {target}"}
+
+            # 添加随机延迟
+            if delay:
+                await asyncio.sleep(random.uniform(1, min(delay, 10)))
+
+            # 发送消息
+            sent_msg = await self.client.send_message(entity, message)
+            self.last_message_time[target] = time.time()
             
-            # 更新任务统计
-            task['last_run'] = datetime.now().isoformat()
-            if success:
-                task['success_count'] = task.get('success_count', 0) + 1
+            return {
+                "success": True,
+                "message_id": sent_msg.id,
+                "target": target,
+                "timestamp": datetime.now(self.shanghai_tz).strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+        except FloodWaitError as e:
+            logger.warning(f"⚠️ 触发限流，需要等待 {e.seconds} 秒")
+            return {"success": False, "error": f"触发限流，需要等待 {e.seconds} 秒", "retry_after": e.seconds}
+
+        except UserPrivacyRestrictedError:
+            return {"success": False, "error": "用户隐私设置限制"}
+
+        except ChatWriteForbiddenError:
+            return {"success": False, "error": "无权限在此群组发送消息"}
+
+        except PeerFloodError:
+            return {"success": False, "error": "发送消息过于频繁"}
+
+        except Exception as e:
+            logger.error(f"❌ 发送消息失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def resolve_entity(self, target: str):
+        """解析目标实体"""
+        try:
+            if target.startswith('@'):
+                # 用户名或频道
+                return await self.client.get_entity(target)
+            elif target.startswith('https://t.me/'):
+                # Telegram链接
+                username = target.split('/')[-1]
+                if username.startswith('+'):
+                    # 私有群组邀请链接
+                    return await self.client.get_entity(target)
+                else:
+                    return await self.client.get_entity('@' + username)
+            elif target.isdigit() or (target.startswith('-') and target[1:].isdigit()):
+                # ID
+                return await self.client.get_entity(int(target))
             else:
-                task['fail_count'] = task.get('fail_count', 0) + 1
-            
-            # 保存任务数据
-            self.config_manager.save_tasks()
-            
-            # 发送通知（如果启用）
-            await self._send_notification(task, success, message)
-            
-            print(f"{'✅' if success else '❌'} 任务 {task['id']}: {message}")
-            
+                # 尝试作为用户名
+                return await self.client.get_entity('@' + target)
+
         except Exception as e:
-            print(f"❌ 执行任务 {task['id']} 出错: {str(e)}")
-            task['fail_count'] = task.get('fail_count', 0) + 1
-            self.config_manager.save_tasks()
-    
-    async def _checkin_group(self, task: dict) -> Tuple[bool, str]:
-        """群组签到"""
+            logger.error(f"❌ 解析实体失败 {target}: {e}")
+            return None
+
+    async def get_me(self) -> Optional[Dict]:
+        """获取当前用户信息"""
         try:
-            # 获取群组实体
-            target = task['target']
-            if target.startswith('-'):
-                # 群组ID
-                entity = await self.client.get_entity(int(target))
+            if not self.is_connected:
+                return None
+
+            me = await self.client.get_me()
+            return {
+                "id": me.id,
+                "username": me.username,
+                "first_name": me.first_name,
+                "last_name": me.last_name,
+                "phone": me.phone,
+                "is_premium": getattr(me, 'premium', False)
+            }
+        except Exception as e:
+            logger.error(f"❌ 获取用户信息失败: {e}")
+            return None
+
+    async def get_dialogs(self, limit: int = 50) -> List[Dict]:
+        """获取对话列表"""
+        try:
+            if not self.is_connected:
+                return []
+
+            dialogs = []
+            async for dialog in self.client.iter_dialogs(limit=limit):
+                entity_info = {
+                    "id": dialog.entity.id,
+                    "title": dialog.title,
+                    "type": "user" if isinstance(dialog.entity, User) else 
+                           "group" if isinstance(dialog.entity, Chat) else "channel",
+                    "username": getattr(dialog.entity, 'username', None),
+                    "unread_count": dialog.unread_count
+                }
+                dialogs.append(entity_info)
+
+            return dialogs
+        except Exception as e:
+            logger.error(f"❌ 获取对话列表失败: {e}")
+            return []
+
+    async def join_chat(self, invite_link: str) -> Dict[str, Any]:
+        """加入群组或频道"""
+        try:
+            if not self.is_connected:
+                return {"success": False, "error": "客户端未连接"}
+
+            if invite_link.startswith('https://t.me/+'):
+                # 私有群组邀请链接
+                result = await self.client(functions.messages.ImportChatInviteRequest(
+                    hash=invite_link.split('+')[1]
+                ))
             else:
-                # 群组链接
-                entity = await self.client.get_entity(target)
-            
-            # 发送签到消息
-            await self.client.send_message(entity, task['command'])
-            
-            return True, f"成功发送到 {entity.title}"
-            
+                # 公开群组或频道
+                username = invite_link.split('/')[-1]
+                result = await self.client(functions.channels.JoinChannelRequest(
+                    channel=username
+                ))
+
+            return {"success": True, "message": "成功加入群组"}
+
         except Exception as e:
-            return False, f"签到失败: {str(e)}"
-    
-    async def _checkin_bot(self, task: dict) -> Tuple[bool, str]:
-        """Bot签到"""
+            logger.error(f"❌ 加入群组失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def leave_chat(self, chat_id: Union[str, int]) -> Dict[str, Any]:
+        """离开群组或频道"""
         try:
-            # 获取Bot实体
-            bot_username = task['target'].replace('@', '')
-            entity = await self.client.get_entity(bot_username)
-            
-            # 发送签到命令
-            await self.client.send_message(entity, task['command'])
-            
-            # 等待Bot响应（可选）
-            await asyncio.sleep(2)
-            
-            return True, f"成功发送到 @{bot_username}"
-            
+            if not self.is_connected:
+                return {"success": False, "error": "客户端未连接"}
+
+            entity = await self.resolve_entity(str(chat_id))
+            if not entity:
+                return {"success": False, "error": "无法找到群组"}
+
+            await self.client(functions.channels.LeaveChannelRequest(entity))
+            return {"success": True, "message": "成功离开群组"}
+
         except Exception as e:
-            return False, f"签到失败: {str(e)}"
-    
-    async def test_checkin(self, task: dict) -> Tuple[bool, str]:
-        """测试签到（立即执行）"""
-        if not self.is_connected():
-            return False, "客户端未连接"
-        
-        return await self.execute_checkin(task)
-    
-    async def _send_notification(self, task: dict, success: bool, message: str):
-        """发送签到结果通知"""
-        # TODO: 实现通知功能
-        pass
+            logger.error(f"❌ 离开群组失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def check_connection(self) -> bool:
+        """检查连接状态"""
+        try:
+            if not self.client or not self.is_connected:
+                return False
+            
+            await self.client.get_me()
+            return True
+        except Exception as e:
+            logger.error(f"❌ 连接检查失败: {e}")
+            self.is_connected = False
+            return False
+
