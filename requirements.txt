@@ -1,7 +1,9 @@
+# requirements.txt
 python-telegram-bot==20.7
-telethon==1.34.0
+telethon==1.32.1
 APScheduler==3.10.4
 pytz==2023.3
-python-dotenv==1.0.0
 aiofiles==23.2.1
-cryptography==41.0.7
+cryptg==0.4.0
+hachoir==3.2.0
+pillow==10.1.0
