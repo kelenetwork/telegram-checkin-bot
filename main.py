@@ -1,119 +1,146 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Telegram Auto Check-in System
-Telegram 自动签到系统 - 主程序
-"""
-
-import os
-import sys
-import json
+# main.py
 import asyncio
+import signal
+import sys
+import os
 import logging
-from datetime import datetime
+from pathlib import Path
 
-# 设置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# 添加项目根目录到Python路径
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
 
-# 检查并安装依赖
-def check_and_install_dependencies():
-    """检查并自动安装所需依赖"""
-    required_packages = {
-        'python-telegram-bot': 'telegram',
-        'telethon': 'telethon',
-        'apscheduler': 'apscheduler',
-        'pytz': 'pytz',
-        'python-dotenv': 'dotenv'
-    }
-    
-    print("检查系统依赖...")
-    missing_packages = []
-    
-    for package, module_name in required_packages.items():
-        try:
-            __import__(module_name)
-            print(f"✓ {package}")
-        except ImportError:
-            print(f"✗ {package} (未安装)")
-            missing_packages.append(package)
-    
-    if missing_packages:
-        print("\n正在安装缺失的依赖包...")
-        for package in missing_packages:
-            print(f"安装 {package}...")
-            os.system(f"{sys.executable} -m pip install {package}")
-        print("\n依赖安装完成！请重新运行程序。")
-        sys.exit(0)
-    else:
-        print("所有依赖已就绪！\n")
-
-# 首次运行检查依赖
-check_and_install_dependencies()
-
-# 导入模块
 from bot_manager import BotManager
-from user_client import UserClient
 from config_manager import ConfigManager
+
+# 配置日志
+def setup_logging():
+    """设置日志配置"""
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_dir / 'app.log', encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+def print_banner():
+    """打印启动横幅"""
+    banner = """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           Telegram Auto Sender                              ║
+║                              自动发送机器人                                    ║
+║                                                                              ║
+║  功能特性：                                                                    ║
+║  • 定时自动发送消息                                                            ║
+║  • 支持多种调度方式                                                            ║
+║  • 完整的用户权限管理                                                          ║
+║  • 详细的统计和日志                                                            ║
+║  • 友好的Telegram Bot界面                                                      ║
+║                                                                              ║
+║  版本：v1.0.0                                                                 ║
+║  作者：AI Assistant                                                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+    """
+    print(banner)
+
+def check_config():
+    """检查配置文件"""
+    config_file = Path("config.json")
+    
+    if not config_file.exists():
+        print("❌ 配置文件不存在！")
+        print("请创建 config.json 文件，参考 config.json.example")
+        return False
+        
+    # 检查必要的配置
+    try:
+        config = ConfigManager()
+        
+        if not config.get_bot_token():
+            print("❌ 请在配置文件中设置 BOT_TOKEN")
+            return False
+            
+        if not config.get_api_id() or not config.get_api_hash():
+            print("❌ 请在配置文件中设置 API_ID 和 API_HASH")
+            return False
+            
+        admin_users = config.get_admin_users()
+        if not admin_users:
+            print("⚠️  警告：未设置管理员用户，请在配置文件中设置 admin_users")
+            
+        return True
+        
+    except Exception as e:
+        print(f"❌ 配置文件检查失败: {e}")
+        return False
 
 async def main():
     """主函数"""
-    print("""
-╔═══════════════════════════════════════════════╗
-║     Telegram Auto Check-in System v2.0        ║
-║         Telegram 自动签到系统                  ║
-║                                               ║
-║  功能特性:                                    ║
-║  • 多账号多任务签到                           ║
-║  • 自定义签到命令和时间                       ║
-║  • Bot交互式管理                              ║
-║  • 用户权限验证                               ║
-║  • 上海时区 (UTC+8)                           ║
-╚═══════════════════════════════════════════════╝
-    """)
+    # 打印横幅
+    print_banner()
     
-    # 初始化配置管理器
-    config_manager = ConfigManager()
+    # 设置日志
+    setup_logging()
+    logger = logging.getLogger(__name__)
     
-    # 检查是否需要初始配置
-    if not config_manager.is_configured():
-        await config_manager.initial_setup()
+    # 检查配置
+    if not check_config():
+        sys.exit(1)
     
-    # 创建用户客户端
-    user_client = UserClient(config_manager)
+    logger.info("🚀 启动 Telegram Auto Sender...")
     
-    # 创建Bot管理器
-    bot_manager = BotManager(config_manager, user_client)
+    # 创建机器人实例
+    bot_manager = None
     
-    # 启动系统
+    def signal_handler(signum, frame):
+        """信号处理器"""
+        logger.info(f"🛑 收到信号 {signum}，正在停止...")
+        if bot_manager:
+            asyncio.create_task(bot_manager.stop_bot())
+        sys.exit(0)
+    
+    # 注册信号处理器
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     try:
-        # 启动用户客户端
-        await user_client.start()
+        # 创建并启动机器人
+        bot_manager = BotManager()
         
-        # 启动Bot
-        await bot_manager.start()
-        
-        # 保持运行
-        await asyncio.Event().wait()
-        
+        if await bot_manager.start_bot():
+            logger.info("✅ 机器人启动成功")
+            
+            # 保持运行
+            while bot_manager.is_running:
+                await asyncio.sleep(1)
+        else:
+            logger.error("❌ 机器人启动失败")
+            sys.exit(1)
+            
     except KeyboardInterrupt:
-        logger.info("收到退出信号，正在关闭系统...")
+        logger.info("🛑 收到键盘中断，正在停止...")
     except Exception as e:
-        logger.error(f"系统错误: {e}")
+        logger.error(f"❌ 运行时错误: {e}")
+        sys.exit(1)
     finally:
-        await user_client.stop()
-        await bot_manager.stop()
-        logger.info("系统已关闭")
+        if bot_manager:
+            await bot_manager.stop_bot()
+        logger.info("👋 程序已退出")
 
-if __name__ == "__main__":
+def run():
+    """运行函数"""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n再见！")
+        print("\n🛑 程序被用户中断")
+    except Exception as e:
+        print(f"❌ 程序异常: {e}")
+
+if __name__ == "__main__":
+    run()
+
