@@ -1,1 +1,17 @@
+# Telegram Bot 相关
+pyTelegramBotAPI>=4.14.0
+telethon>=1.29.0
 
+# 任务调度
+APScheduler>=3.10.0
+
+# 实用工具
+python-dateutil>=2.8.0
+pytz>=2023.3
+requests>=2.31.0
+
+# 异步支持
+aiohttp>=3.8.0
+
+# 加密相关
+cryptg>=0.4.0
