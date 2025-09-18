@@ -1,17 +1,46 @@
-# Telegram Bot 相关
-pyTelegramBotAPI>=4.14.0
-telethon>=1.29.0
+# Telegram Bot
+python-telegram-bot==20.7
+python-telegram-bot[job-queue]==20.7
 
-# 任务调度
-APScheduler>=3.10.0
+# HTTP客户端
+aiohttp==3.9.1
+requests==2.31.0
 
-# 实用工具
-python-dateutil>=2.8.0
-pytz>=2023.3
-requests>=2.31.0
+# 数据库
+aiosqlite==0.19.0
+asyncpg==0.29.0
 
-# 异步支持
-aiohttp>=3.8.0
+# 定时任务
+APScheduler==3.10.4
 
-# 加密相关
-cryptg>=0.4.0
+# 加密
+cryptography==41.0.8
+
+# 配置文件
+PyYAML==6.0.1
+python-dotenv==1.0.0
+
+# 日志
+loguru==0.7.2
+
+# 工具库
+aiofiles==23.2.1
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+# 邮件
+aiosmtplib==3.0.1
+
+# 日期时间
+python-dateutil==2.8.2
+pytz==2023.3
+
+# JSON处理
+orjson==3.9.10
+
+# 验证
+pydantic==2.5.2
+
+# 进度条（可选）
+tqdm==4.66.1
+rich==13.7.0
