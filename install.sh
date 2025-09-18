@@ -2,6 +2,7 @@
 
 # Telegram Auto Check-in Bot 一键安装脚本
 # 支持 Ubuntu/Debian/CentOS/RHEL/Fedora
+# 支持 root 和普通用户
 
 set -e
 
@@ -67,21 +68,32 @@ check_python() {
     return 1
 }
 
+# 运行命令（自动处理 root/sudo）
+run_cmd() {
+    if [ "$EUID" -eq 0 ]; then
+        # 是 root 用户，直接运行
+        "$@"
+    else
+        # 非 root 用户，使用 sudo
+        sudo "$@"
+    fi
+}
+
 # 安装 Python 3.8+
 install_python() {
     print_info "安装 Python 3.8+..."
     
     case $OS in
         ubuntu|debian)
-            apt-get update -qq
-            apt-get install -y python3 python3-venv python3-pip
+            run_cmd apt-get update -qq
+            run_cmd apt-get install -y python3 python3-venv python3-pip
             ;;
         centos|rhel|fedora)
             if [ "$VER" -ge 8 ]; then
-                dnf install -y python38 python38-devel
+                run_cmd dnf install -y python38 python38-devel
             else
-                yum install -y centos-release-scl
-                yum install -y rh-python38 rh-python38-python-devel
+                run_cmd yum install -y centos-release-scl
+                run_cmd yum install -y rh-python38 rh-python38-python-devel
                 source /opt/rh/rh-python38/enable
             fi
             ;;
@@ -98,11 +110,11 @@ install_dependencies() {
     
     case $OS in
         ubuntu|debian)
-            apt-get update -qq
-            apt-get install -y git curl wget gcc python3-dev screen
+            run_cmd apt-get update -qq
+            run_cmd apt-get install -y git curl wget gcc python3-dev screen
             ;;
         centos|rhel|fedora)
-            yum install -y git curl wget gcc python3-devel screen
+            run_cmd yum install -y git curl wget gcc python3-devel screen
             ;;
         *)
             print_error "不支持的系统: $OS"
@@ -201,7 +213,7 @@ create_systemd_service() {
     WORK_DIR=$(pwd)
     
     # 创建服务文件
-    tee /etc/systemd/system/telegram-checkin-bot.service > /dev/null << EOF
+    run_cmd tee /etc/systemd/system/telegram-checkin-bot.service > /dev/null << EOF
 [Unit]
 Description=Telegram Auto Check-in Bot
 After=network.target
@@ -222,7 +234,7 @@ WantedBy=multi-user.target
 EOF
     
     # 重载 systemd
-    systemctl daemon-reload
+    run_cmd systemctl daemon-reload
     
     print_success "Systemd 服务创建完成"
 }
@@ -244,10 +256,17 @@ show_completion_info() {
     echo "   ./start.sh"
     echo "   # 按 Ctrl+A 然后按 D 分离会话"
     echo
-    echo "3. 使用 systemd 服务（推荐）："
-    echo "   systemctl start telegram-checkin-bot"
-    echo "   systemctl enable telegram-checkin-bot  # 开机自启"
-    echo "   systemctl status telegram-checkin-bot  # 查看状态"
+    if [ "$EUID" -eq 0 ]; then
+        echo "3. 使用 systemd 服务（推荐）："
+        echo "   systemctl start telegram-checkin-bot"
+        echo "   systemctl enable telegram-checkin-bot  # 开机自启"
+        echo "   systemctl status telegram-checkin-bot   # 查看状态"
+    else
+        echo "3. 使用 systemd 服务（推荐）："
+        echo "   sudo systemctl start telegram-checkin-bot"
+        echo "   sudo systemctl enable telegram-checkin-bot  # 开机自启"
+        echo "   sudo systemctl status telegram-checkin-bot   # 查看状态"
+    fi
     echo
     echo -e "${YELLOW}首次运行需要配置以下信息：${NC}"
     echo "   - Bot Token (从 @BotFather 获取)"
@@ -258,8 +277,13 @@ show_completion_info() {
     
     if [ "$EUID" -eq 0 ]; then 
         echo
-        print_warning "⚠️  您正在使用 root 用户运行"
-        print_warning "出于安全考虑，建议创建普通用户运行此服务"
+        print_warning "⚠️  注意：您使用 root 用户安装"
+        print_warning "建议创建普通用户运行服务以提高安全性"
+        echo
+        echo "创建运行用户的命令："
+        echo "   useradd -m -s /bin/bash telegram"
+        echo "   chown -R telegram:telegram $PROJECT_DIR"
+        echo "   # 然后修改 systemd 服务文件中的 User=telegram"
     fi
 }
 
@@ -275,21 +299,15 @@ main() {
     detect_os
     print_info "检测到系统: $OS $VER"
     
-    # 检查是否为 root 并发出警告
+    # 提示用户权限信息
     if [ "$EUID" -eq 0 ]; then 
-        print_warning "⚠️  检测到您正在使用 root 用户"
-        print_warning "建议创建普通用户运行此程序以提高安全性"
-        echo
-        read -p "是否继续使用 root 用户安装？[y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "安装已取消"
-            print_info "您可以创建新用户后重新运行安装："
-            echo "   useradd -m -s /bin/bash telegram"
-            echo "   passwd telegram"
-            echo "   usermod -aG sudo telegram"
-            echo "   su - telegram"
-            exit 0
+        print_info "以 root 用户身份运行"
+    else
+        print_info "以普通用户身份运行"
+        # 检查 sudo 权限
+        if ! sudo -n true 2>/dev/null; then
+            print_warning "需要 sudo 权限来安装系统依赖"
+            sudo -v
         fi
     fi
     
