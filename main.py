@@ -240,7 +240,6 @@ async def main():
             "_目标可用：@用户名 / t.me 链接 / -100群ID / 数字用户ID（需在会话列表） / me_\n"
         )
 
-
     @bot.on(events.NewMessage(pattern=r"^/(start|help)$"))
     async def _(e):
         if not admin_ok(e): return
