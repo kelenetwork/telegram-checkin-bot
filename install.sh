@@ -126,4 +126,4 @@ echo
 echo "✅ 安装完成！"
 echo "• 查看日志：journalctl -u ${SERVICE_NAME} -f"
 echo "• 修改配置：sudo -u ${APP_USER} nano ${APP_DIR}/config.json"
-echo "• 多账号登录：在 Telegram 里给管理 Bot 发 /help → /adduser 开始登录流程"
+echo "• 多账号登录：在 Telegram 里给管理 Bot 发 /help → /adduser 开始登录流程" 
