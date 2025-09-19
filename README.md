@@ -47,13 +47,13 @@ sudo bash install.sh
 仓库提供 `manage.sh`，简化日常管理：
 
 ```bash
-./manage.sh start     # 启动服务
-./manage.sh stop      # 停止服务
-./manage.sh restart   # 重启服务
-./manage.sh status    # 查看状态
-./manage.sh logs      # 实时日志
-./manage.sh edit      # 编辑 config.json
-./manage.sh update    # 从仓库更新到 /opt 并重启
+bash manage.sh start     # 启动服务
+bash manage.sh stop      # 停止服务
+bash manage.sh restart   # 重启服务
+bash manage.sh status    # 查看状态
+bash manage.sh logs      # 实时日志
+bash manage.sh edit      # 编辑 config.json
+bash manage.sh update    # 从仓库更新到 /opt 并重启
 ```
 
 ---
