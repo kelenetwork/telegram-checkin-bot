@@ -6,9 +6,32 @@ APP_DIR="/opt/tg-checkin"
 APP_USER="tgcheckin"
 PYTHON_BIN="python3"
 
-# 新增 rsync 依赖；无 rsync 时自动用 cp -a 兜底
-PKGS_DEBIAN=("python3" "python3-venv" "python3-distutils" "ca-certificates" "tzdata" "git" "rsync")
-PKGS_RHEL=("python3" "python3-virtualenv" "ca-certificates" "tzdata" "git" "rsync")
+# Debian/Ubuntu 所需依赖
+PKGS_DEBIAN=(
+  python3
+  python3-venv
+  python3-pip
+  ca-certificates
+  tzdata
+  git
+  rsync
+  build-essential
+  libffi-dev
+)
+
+# RHEL 系所需依赖
+PKGS_RHEL=(
+  python3
+  python3-virtualenv
+  python3-pip
+  ca-certificates
+  tzdata
+  git
+  rsync
+  gcc
+  make
+  libffi-devel
+)
 
 echo "==> TG Auto Checkin 安装程序（需 root）"
 if [[ $EUID -ne 0 ]]; then
@@ -24,10 +47,11 @@ install_sys_deps() {
   elif command -v yum >/dev/null 2>&1; then
     yum install -y "${PKGS_RHEL[@]}" || true
   else
-    echo "未检测到 apt/dnf/yum，请自行安装 Python3、git、tzdata（可选 rsync）。"
+    echo "未检测到 apt/dnf/yum，请自行安装 Python3、pip、git、tzdata（可选 rsync/build-essential）。"
   fi
 }
 install_sys_deps
+
 
 # 创建系统用户
 if ! id -u "$APP_USER" >/dev/null 2>&1; then
