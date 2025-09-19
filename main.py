@@ -215,7 +215,7 @@ async def main():
     def admin_ok(event): return event.sender_id in ADMINS
 
     # 漂亮的帮助
-    ef help_card():
+    def help_card():
         return (
             "🧭 *签到机器人 · 管理菜单*\n"
             "—— *任务管理* ——\n"
